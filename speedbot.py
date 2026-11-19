@@ -18,8 +18,14 @@ SPEED = {"login": "IShowSpeed", "hashtags": "#ishowspeed #speed",
          "cam_box": [0.0, 0.42, 0.205, 0.23], "game_box": [0.205, 0.0, 0.6, 1.0]}
 
 
+COOKIES = Path("/tmp/yt_cookies.txt")
+if os.environ.get("YT_COOKIES", "").strip() and not COOKIES.exists():
+    COOKIES.write_text(os.environ["YT_COOKIES"].strip() + "\n")
+
+
 def ytdlp(*args, timeout=3600):
-    return subprocess.run(["yt-dlp", "--no-warnings", *args],
+    extra = ["--cookies", str(COOKIES)] if COOKIES.exists() else []
+    return subprocess.run(["yt-dlp", "--no-warnings", *extra, *args],
                           capture_output=True, text=True, timeout=timeout)
 
 
@@ -39,14 +45,29 @@ def live_info():
     """If Speed is live right now, returns (video_id, title, stream_url). Otherwise None."""
     r = ytdlp("-f", "best[height<=720]/best", "--print", "id", "--print", "title", "-g", LIVE_URL, timeout=120)
     lines = [l for l in r.stdout.strip().splitlines() if l.strip()]
+    if r.returncode and ("Sign in" in r.stderr or "cookies" in r.stderr):
+        raise RuntimeError("YouTube blocked the live check: " + r.stderr[-250:])
     if r.returncode or len(lines) < 3:
         return None
     return lines[0], lines[1], lines[-1]
 
 
-def record_live(stream_url, out, minutes):
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", stream_url, "-t", str(minutes * 60),
-                    "-c", "copy", str(out)], timeout=minutes * 60 + 600)
+def record_live(live_page, out, minutes):
+    """Records the live stream for `minutes` using yt-dlp (so the YouTube login is used), then stops."""
+    extra = ["--cookies", str(COOKIES)] if COOKIES.exists() else []
+    p = subprocess.Popen(["yt-dlp", "--no-warnings", *extra, "-f", "best[height<=720]/best",
+                          "--hls-use-mpegts", "--no-part", "-o", str(out), live_page],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    try:
+        p.wait(timeout=minutes * 60)
+    except subprocess.TimeoutExpired:
+        p.terminate()
+        try:
+            p.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    if not out.exists() and p.stderr:
+        print("live record error:", p.stderr.read()[-300:])
 
 
 def cut_local(src, start, length, out):
@@ -57,9 +78,9 @@ def cut_local(src, start, length, out):
 def process_live(vid, title, stream_url):
     shutil.rmtree(WORK, ignore_errors=True)
     WORK.mkdir(parents=True)
-    rec = WORK / "live.mkv"
+    rec = WORK / "live.ts"
     print("Speed is live, recording", LIVE_RECORD_MIN, "min")
-    record_live(stream_url, rec, LIVE_RECORD_MIN)
+    record_live("https://www.youtube.com/watch?v=" + vid, rec, LIVE_RECORD_MIN)
     if not rec.exists() or rec.stat().st_size < 1_000_000:
         raise RuntimeError("live recording failed (YouTube may be blocking the download)")
     peaks = loud_moments(rec, LIVE_CLIPS, skip_start=0)
@@ -71,10 +92,11 @@ def process_live(vid, title, stream_url):
         sec = WORK / f"lsec{i}.mp4"
         cut_local(rec, start, 40, sec)
         dur = cb.probe_duration(sec)
+        look, layout = cb.choose_layout(sec, SPEED)
         ass = WORK / f"ls{i}.ass"
-        ass.write_text(cb.build_ass(cb.transcribe(sec), "SPEED LOST IT", "WAIT FOR IT...", "cam", dur))
+        ass.write_text(cb.build_ass(cb.transcribe(sec), "SPEED LOST IT", "WAIT FOR IT...", layout, dur))
         final = WORK / f"lfinal{i}.mp4"
-        cb.render(sec, final, SPEED, ass, dur)
+        cb.render(sec, final, look, ass, dur)
         send_speed(final, entry, i, len(peaks), None, url)
         time.sleep(2)
 
@@ -125,10 +147,10 @@ def send_speed(path, entry, i, n, start, url):
 
 def report_error(state, err):
     print("ERROR:", err)
-    today = datetime.date.today().isoformat()
-    if state.get("last_error_day") == today:
-        return  # only warn once a day
-    state["last_error_day"] = today
+    msg, now = str(err)[:120], time.time()
+    if state.get("last_error_msg") == msg and now - state.get("last_error_time", 0) < 3 * 3600:
+        return  # don't repeat the same warning more than every 3 hours
+    state["last_error_msg"], state["last_error_time"] = msg, now
     try:
         requests.post(cb.WEBHOOK, json={"content": f"⚠️ Speed bot problem: {str(err)[:400]}\nSend this message to Claude."}, timeout=30)
     except Exception:
@@ -155,10 +177,11 @@ def process(url, entry):
             continue
         dur = cb.probe_duration(sec)
         words = cb.transcribe(sec)
+        look, layout = cb.choose_layout(sec, SPEED)
         ass = WORK / f"s{i}.ass"
-        ass.write_text(cb.build_ass(words, "SPEED LOST IT", "WAIT FOR IT...", "cam", dur))
+        ass.write_text(cb.build_ass(words, "SPEED LOST IT", "WAIT FOR IT...", layout, dur))
         final = WORK / f"final{i}.mp4"
-        cb.render(sec, final, SPEED, ass, dur)
+        cb.render(sec, final, look, ass, dur)
         send_speed(final, entry, i, len(peaks), start, url)
         sent += 1
         time.sleep(2)
@@ -168,8 +191,15 @@ def process(url, entry):
 
 def main():
     STATE.parent.mkdir(exist_ok=True)
-    state = json.loads(STATE.read_text()) if STATE.exists() else {"done": [], "last_error_day": ""}
-    live = live_info()
+    state = json.loads(STATE.read_text()) if STATE.exists() else {"done": []}
+    state.setdefault("fails", {})
+    manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    try:
+        live = live_info()
+    except Exception as e:
+        report_error(state, e)
+        STATE.write_text(json.dumps(state, indent=0))
+        return
     if live:
         vid, title, stream_url = live
         if vid not in state["done"]:
@@ -190,14 +220,24 @@ def main():
     if not state["done"] and ended:
         state["done"] = [e["id"] for e in ended[1:]]  # first run: only do the newest stream
     todo = [e for e in ended if e["id"] not in state["done"]][:1]
-    print(f"{len(todo)} new ended stream(s)")
+    if manual and not todo and ended:
+        todo = ended[:1]  # manual test run: redo the newest stream
+    print(f"{len(todo)} stream(s) to clip")
+    if manual and not todo:
+        requests.post(cb.WEBHOOK, json={"content": "✅ Speed bot test: working, but Speed isn't live and has no finished stream to clip right now."}, timeout=30)
     for e in todo:
         url = "https://www.youtube.com/watch?v=" + e["id"]
         try:
             process(url, e)
+            state["fails"].pop(e["id"], None)
+            if e["id"] not in state["done"]:
+                state["done"].append(e["id"])
         except Exception as ex:
             report_error(state, ex)
-        state["done"].append(e["id"])
+            n = state["fails"].get(e["id"], 0) + 1
+            state["fails"][e["id"]] = n
+            if n >= 3 and e["id"] not in state["done"]:
+                state["done"].append(e["id"])  # give up on this stream after 3 tries
     state["done"] = state["done"][-200:]
     STATE.write_text(json.dumps(state, indent=0))
 
