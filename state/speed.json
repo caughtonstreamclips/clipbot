@@ -4,5 +4,10 @@
 "Kush1FqnhbU",
 "qSyo5d-dVzA"
 ],
-"last_error_day": "2026-11-19"
+"last_error_day": "2026-11-19",
+"fails": {
+"qSyo5d-dVzA": 1
+},
+"last_error_msg": "audio download failed: ERROR: [youtube] qSyo5d-dVzA: This live event has ended.\n",
+"last_error_time": 1795122281.7338169
 }
