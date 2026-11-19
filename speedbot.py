@@ -157,10 +157,17 @@ def report_error(state, err):
         pass
 
 
+class NotReady(Exception):
+    """YouTube hasn't finished making the stream replay yet. Try again next hour."""
+
+
 def process(url, entry):
     shutil.rmtree(WORK, ignore_errors=True)
     WORK.mkdir(parents=True)
     r = ytdlp("-f", "wa/ba", "-o", str(WORK / "audio.%(ext)s"), url, timeout=3600)
+    if r.returncode and ("live event has ended" in r.stderr or "is not available" in r.stderr
+                         or "being processed" in r.stderr):
+        raise NotReady("replay not ready yet")
     if r.returncode:
         raise RuntimeError("audio download failed: " + r.stderr[-300:])
     audio = next(WORK.glob("audio.*"))
@@ -232,6 +239,14 @@ def main():
             state["fails"].pop(e["id"], None)
             if e["id"] not in state["done"]:
                 state["done"].append(e["id"])
+        except NotReady:
+            waits = state.setdefault("waiting", {})
+            waits[e["id"]] = waits.get(e["id"], 0) + 1
+            print(f"replay not ready yet (check #{waits[e['id']]}), will try again next hour")
+            if manual:
+                requests.post(cb.WEBHOOK, json={"content": "⏳ Speed bot: Speed's stream just ended. YouTube is still preparing the replay, so the bot will clip it automatically within the next few hours. Nothing to do."}, timeout=30)
+            if waits[e["id"]] >= 24 and e["id"] not in state["done"]:
+                state["done"].append(e["id"])  # gave up after a day
         except Exception as ex:
             report_error(state, ex)
             n = state["fails"].get(e["id"], 0) + 1
