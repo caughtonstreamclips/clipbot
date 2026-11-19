@@ -13,10 +13,10 @@ CONFIG = json.loads((ROOT / "config.json").read_text())
 STATE_FILE = ROOT / "state" / "posted.json"
 WORK = Path("/tmp/clipwork")
 
-CLIENT_ID = os.environ.get("TWITCH_CLIENT_ID", "")
-CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "")
-WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
-MAX_MB = 9.3  # Discord free upload limit is 10 MB
+CLIENT_ID = os.environ.get("TWITCH_CLIENT_ID", "").strip()
+CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "").strip()
+WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "").strip()
+MAX_MB = 8.8  # Discord free upload limit is 10 MB; stay safely under it
 
 
 # ---------------------------------------------------------------- Twitch
@@ -24,7 +24,9 @@ def twitch_token():
     r = requests.post("https://id.twitch.tv/oauth2/token", params={
         "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
         "grant_type": "client_credentials"}, timeout=30)
-    r.raise_for_status()
+    if not r.ok:
+        raise SystemExit(f"TWITCH LOGIN FAILED ({r.status_code}): {r.text} | "
+                         f"client id length={len(CLIENT_ID)}, secret length={len(CLIENT_SECRET)}")
     return r.json()["access_token"]
 
 
@@ -128,6 +130,43 @@ def probe_duration(path):
     return float(out.strip() or 0)
 
 
+def face_in_box(src, b):
+    """True if a face shows up inside the facecam box (so the face-on-top layout fits).
+    If the streamer has no facecam there (IRL, full-screen cam, scene change) we use the blur layout."""
+    try:
+        import cv2, numpy as np
+        cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        if cascade.empty():
+            return True
+    except Exception:
+        return True  # can't check, keep the normal layout
+    dur = probe_duration(src) or 10
+    x, y, w, h = b
+    X, Y, W, H = int(1920 * x), int(1080 * y), int(1920 * w), int(1080 * h)
+    hits = 0
+    for frac in (0.2, 0.5, 0.8):
+        png = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(dur * frac), "-i", str(src), "-frames:v", "1",
+                              "-vf", "scale=1920:1080", "-f", "image2pipe", "-vcodec", "png", "-"],
+                             capture_output=True).stdout
+        if not png:
+            continue
+        img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        faces = cascade.detectMultiScale(img[Y:Y + H, X:X + W], 1.1, 5, minSize=(40, 40))
+        hits += len(faces) > 0
+    return hits >= 1
+
+
+def choose_layout(src, streamer):
+    """Returns (streamer settings to render with, 'cam' or 'blur')."""
+    if streamer.get("cam_box") and face_in_box(src, streamer["cam_box"]):
+        return streamer, "cam"
+    s = dict(streamer)
+    s.pop("cam_box", None)
+    return s, "blur"
+
+
 def box(b):
     x, y, w, h = b
     return f"crop={int(1920*w)}:{int(1080*h)}:{int(1920*x)}:{int(1080*y)}"
@@ -199,10 +238,11 @@ def main():
             dur = probe_duration(src)
             words = transcribe(src)
             hook1 = f"{name} in GTA 6" if streamer.get("game") else name
+            look, layout = choose_layout(src, streamer)
             ass_path = WORK / "subs.ass"
-            ass_path.write_text(build_ass(words, hook1, clip["title"], "cam" if streamer.get("cam_box") else "blur", dur))
+            ass_path.write_text(build_ass(words, hook1, clip["title"], layout, dur))
             out = WORK / "out.mp4"
-            render(src, out, streamer, ass_path, dur)
+            render(src, out, look, ass_path, dur)
             send_discord(out, streamer, name, clip)
             print("sent:", name, clip["title"], clip["view_count"])
         except Exception as e:
