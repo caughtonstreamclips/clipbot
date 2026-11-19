@@ -2,6 +2,7 @@
   "lookback_hours": 6,
   "min_seconds": 6,
   "max_per_run_total": 4,
+  "max_per_day": 15,
   "streamers": [
     {
       "login": "lacy",
@@ -26,6 +27,38 @@
       "min_views": 800,
       "max_per_run": 1,
       "hashtags": "#kaicenat #kai"
+    },
+    {
+      "login": "jynxzi",
+      "min_views": 600,
+      "max_per_run": 1,
+      "hashtags": "#jynxzi"
+    },
+    {
+      "login": "caseoh_",
+      "min_views": 600,
+      "max_per_run": 1,
+      "hashtags": "#caseoh"
+    },
+    {
+      "login": "clix",
+      "min_views": 400,
+      "max_per_run": 1,
+      "hashtags": "#clix",
+      "campaign": "Clix GTA VI",
+      "campaign_game": "Grand Theft Auto VI"
+    },
+    {
+      "login": "ninja",
+      "min_views": 800,
+      "max_per_run": 1,
+      "hashtags": "#ninja"
+    },
+    {
+      "login": "tfue",
+      "min_views": 800,
+      "max_per_run": 1,
+      "hashtags": "#tfue"
     }
   ]
 }
