@@ -39,7 +39,8 @@ jobs:
       - name: Run Speed bot
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: python speedbot.py
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: pip install -U yt-dlp && python speedbot.py
 
       - name: Save which streams were done
         run: |
