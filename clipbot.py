@@ -41,6 +41,16 @@ def find_new_clips(token, posted):
     logins = [s["login"] for s in CONFIG["streamers"]]
     users = {u["login"].lower(): u for u in helix("users", token, [("login", l) for l in logins])}
     game_ids = {}
+
+    def gid(name):
+        if not name:
+            return None
+        if name not in game_ids:
+            g = helix("games", token, {"name": name})
+            game_ids[name] = g[0]["id"] if g else None
+        return game_ids[name]
+
+    gta = gid("Grand Theft Auto VI")
     since = (datetime.datetime.utcnow() - datetime.timedelta(hours=CONFIG["lookback_hours"])
              ).strftime("%Y-%m-%dT%H:%M:%SZ")
     picks = []
@@ -48,12 +58,8 @@ def find_new_clips(token, posted):
         u = users.get(s["login"].lower())
         if not u:
             print("streamer not found:", s["login"]); continue
-        game_id = None
-        if s.get("game"):
-            if s["game"] not in game_ids:
-                g = helix("games", token, {"name": s["game"]})
-                game_ids[s["game"]] = g[0]["id"] if g else None
-            game_id = game_ids[s["game"]]
+        game_id = gid(s.get("game"))
+        camp_game = gid(s.get("campaign_game"))
         clips = helix("clips", token, {"broadcaster_id": u["id"], "started_at": since, "first": 50})
         good = [c for c in clips
                 if c["id"] not in posted
@@ -62,6 +68,9 @@ def find_new_clips(token, posted):
                 and (not game_id or not c.get("game_id") or c["game_id"] == game_id)]
         good.sort(key=lambda c: c["view_count"], reverse=True)
         for c in good[: s.get("max_per_run", 2)]:
+            c["_gta"] = bool(gta and c.get("game_id") == gta)
+            # campaign only counts if the clip is from the right game (when the campaign needs one)
+            c["_campaign"] = s.get("campaign") if (not camp_game or c.get("game_id") == camp_game) else None
             picks.append((s, u["display_name"], c))
     picks.sort(key=lambda p: p[2]["view_count"], reverse=True)
     return picks[: CONFIG["max_per_run_total"]]
@@ -204,12 +213,13 @@ def render(src, out, streamer, ass_path, duration):
 def send_discord(path, streamer, name, clip):
     title = clean(clip["title"])[:80]
     tags = streamer["hashtags"]
-    tiktok = f"{name} {title} 😭 {tags} #gta6 #gtavi #gta #twitch #streamer"
+    game_tags = "#gta6 #gtavi #gta " if clip.get("_gta") else ""
+    tiktok = f"{name} {title} 😭 {tags} {game_tags}#twitch #streamer #fyp"
     yt_title = f"{name} {title} 😭 {tags.split()[0]} #shorts"[:100]
-    yt_desc = f"{name} live on Twitch: twitch.tv/{streamer['login']} {tags} #gta6 #twitch"
-    if streamer.get("campaign"):
+    yt_desc = f"{name} live on Twitch: twitch.tv/{streamer['login']} {tags} {game_tags}#twitch"
+    if clip.get("_campaign"):
         action = ("💰 **CAMPAIGN CLIP**: post on TikTok + YouTube, then submit BOTH within 30 min at "
-                  "https://contentrewards.com/c/discover → " + streamer["campaign"])
+                  "https://contentrewards.com/c/discover → " + clip["_campaign"])
     else:
         action = "📈 Growth clip (no campaign): just post on TikTok + YouTube."
     msg = (f"🎬 **NEW {name.upper()} CLIP**: {clip['view_count']} views on Twitch\n"
@@ -228,6 +238,15 @@ def main():
     posted = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else []
     token = twitch_token()
     picks = find_new_clips(token, set(posted))
+    # daily cap so your phone isn't flooded: best clips first, the rest wait
+    daily_file = STATE_FILE.parent / "daily.json"
+    today = datetime.date.today().isoformat()
+    daily = json.loads(daily_file.read_text()) if daily_file.exists() else {}
+    sent_today = daily.get(today, 0)
+    room = max(0, CONFIG.get("max_per_day", 15) - sent_today)
+    if len(picks) > room:
+        print(f"daily limit: only {room} more clip(s) today")
+        picks = picks[:room]
     print(f"{len(picks)} new clip(s) to make")
     for streamer, name, clip in picks:
         try:
@@ -237,7 +256,7 @@ def main():
                            check=True, timeout=300)
             dur = probe_duration(src)
             words = transcribe(src)
-            hook1 = f"{name} in GTA 6" if streamer.get("game") else name
+            hook1 = f"{name} in GTA 6" if clip.get("_gta") else name
             look, layout = choose_layout(src, streamer)
             ass_path = WORK / "subs.ass"
             ass_path.write_text(build_ass(words, hook1, clip["title"], layout, dur))
@@ -245,6 +264,8 @@ def main():
             render(src, out, look, ass_path, dur)
             send_discord(out, streamer, name, clip)
             print("sent:", name, clip["title"], clip["view_count"])
+            sent_today += 1
+            daily_file.write_text(json.dumps({today: sent_today}))
         except Exception as e:
             print("FAILED:", clip.get("url"), e)
         posted.append(clip["id"])  # mark as done either way so we never spam retries
