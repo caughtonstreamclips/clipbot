@@ -1,0 +1,31 @@
+{
+  "lookback_hours": 6,
+  "min_seconds": 6,
+  "max_per_run_total": 4,
+  "streamers": [
+    {
+      "login": "lacy",
+      "game": "Grand Theft Auto VI",
+      "min_views": 150,
+      "max_per_run": 2,
+      "hashtags": "#LACY #lacy",
+      "campaign": "Lacy GTA VI",
+      "cam_box": [0.0, 0.0, 0.27, 0.27],
+      "game_box": [0.26, 0.21, 0.47, 0.79]
+    },
+    {
+      "login": "yourragegaming",
+      "game": "Grand Theft Auto VI",
+      "min_views": 150,
+      "max_per_run": 1,
+      "hashtags": "#yourrage #rage",
+      "campaign": "YourRAGE GTA 6"
+    },
+    {
+      "login": "kaicenat",
+      "min_views": 800,
+      "max_per_run": 1,
+      "hashtags": "#kaicenat #kai"
+    }
+  ]
+}
