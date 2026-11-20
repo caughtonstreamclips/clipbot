@@ -45,8 +45,11 @@ def live_info():
     """If Speed is live right now, returns (video_id, title, stream_url). Otherwise None."""
     r = ytdlp("-f", "best[height<=720]/best", "--print", "id", "--print", "title", "-g", LIVE_URL, timeout=120)
     lines = [l for l in r.stdout.strip().splitlines() if l.strip()]
-    if r.returncode and ("Sign in" in r.stderr or "cookies" in r.stderr):
+    if r.returncode and ("Sign in" in r.stderr or "cookies" in r.stderr or "bot" in r.stderr):
         raise RuntimeError("YouTube blocked the live check: " + r.stderr[-250:])
+    if r.returncode and not any(x in r.stderr for x in ("not currently live", "is not live", "will begin",
+                                                       "Premieres in", "live event will", "does not have a live")):
+        raise RuntimeError("live check failed: " + r.stderr[-250:])  # don't fail silently while he's live
     if r.returncode or len(lines) < 3:
         return None
     return lines[0], lines[1], lines[-1]
@@ -101,8 +104,10 @@ def process_live(vid, title, stream_url):
         time.sleep(2)
 
 
-def loud_moments(audio, n, skip_start=180):
-    """Returns up to n clearly-loud moments (in seconds), at least 2 minutes apart."""
+def loud_moments(audio, n, skip_start=180, min_keep=2):
+    """Returns up to n moments (in seconds, 2+ minutes apart) where Speed gets clearly louder than the
+    minute around it. Speed is loud all the time, so this compares to the recent level, not the whole stream.
+    Always returns at least min_keep moments (the best ones) so a long stream never gives zero clips."""
     p = subprocess.Popen(["ffmpeg", "-v", "error", "-i", str(audio), "-ac", "1", "-ar", "8000",
                           "-f", "s16le", "-"], stdout=subprocess.PIPE)
     db = []
@@ -114,15 +119,17 @@ def loud_moments(audio, n, skip_start=180):
         db.append(20 * np.log10(np.sqrt(np.mean(x * x)) + 1e-9))
     p.wait()
     db = np.array(db)
-    if len(db) < 300:
+    if len(db) < 120:
         return []
-    roll = np.convolve(db, np.ones(4) / 4, "same")
-    roll[:skip_start] = -200  # skip the stream intro
-    roll[-20:] = -200         # need room after the moment
-    floor = np.median(db) + 6  # must be clearly louder than normal
+    from numpy.lib.stride_tricks import sliding_window_view
+    s = np.convolve(np.pad(db, 1, mode="edge"), np.ones(3) / 3, "valid")
+    base = np.median(sliding_window_view(np.pad(s, 30, mode="edge"), 61), axis=1)
+    score = (s - base) + 0.5 * (s - np.median(s))  # louder than the last minute AND loud overall
+    score[:skip_start] = -1e9  # skip the stream intro
+    score[-20:] = -1e9         # need room after the moment
     picks = []
-    for i in np.argsort(-roll):
-        if roll[i] < floor:
+    for i in np.argsort(-score):
+        if score[i] <= -1e8 or (score[i] < 4 and len(picks) >= min_keep):
             break
         if all(abs(int(i) - q) > 120 for q in picks):
             picks.append(int(i))
@@ -166,7 +173,7 @@ def process(url, entry):
     WORK.mkdir(parents=True)
     r = ytdlp("-f", "wa/ba", "-o", str(WORK / "audio.%(ext)s"), url, timeout=3600)
     if r.returncode and ("live event has ended" in r.stderr or "is not available" in r.stderr
-                         or "being processed" in r.stderr):
+                         or "being processed" in r.stderr or "Premiere" in r.stderr):
         raise NotReady("replay not ready yet")
     if r.returncode:
         raise RuntimeError("audio download failed: " + r.stderr[-300:])
@@ -223,7 +230,8 @@ def main():
         report_error(state, e)
         STATE.write_text(json.dumps(state, indent=0))
         return
-    ended = [e for e in entries if e.get("id") and e.get("duration") and e.get("live_status") != "is_live"]
+    ended = [e for e in entries if e.get("id") and e.get("duration") and e.get("live_status") != "is_live"
+             and e["duration"] <= 12 * 3600]  # 12h+ marathons: YouTube keeps no full replay, they're clipped live
     if not state["done"] and ended:
         state["done"] = [e["id"] for e in ended[1:]]  # first run: only do the newest stream
     todo = [e for e in ended if e["id"] not in state["done"]][:1]
