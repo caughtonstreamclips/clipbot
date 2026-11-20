@@ -11,8 +11,19 @@
       "max_per_run": 2,
       "hashtags": "#LACY #lacy",
       "campaign": "Lacy GTA VI",
-      "cam_box": [0.0, 0.0, 0.27, 0.27],
-      "game_box": [0.26, 0.21, 0.47, 0.79]
+      "cam_box": [
+        0.0,
+        0.0,
+        0.27,
+        0.27
+      ],
+      "game_box": [
+        0.26,
+        0.21,
+        0.47,
+        0.79
+      ],
+      "name": "Lacy"
     },
     {
       "login": "yourragegaming",
@@ -20,45 +31,51 @@
       "min_views": 150,
       "max_per_run": 1,
       "hashtags": "#yourrage #rage",
-      "campaign": "YourRAGE GTA 6"
+      "campaign": "YourRAGE GTA 6",
+      "name": "YourRAGE"
     },
     {
       "login": "kaicenat",
       "min_views": 800,
       "max_per_run": 1,
-      "hashtags": "#kaicenat #kai"
+      "hashtags": "#kaicenat #kai",
+      "name": "Kai Cenat"
     },
     {
       "login": "jynxzi",
       "min_views": 600,
       "max_per_run": 1,
-      "hashtags": "#jynxzi"
+      "hashtags": "#jynxzi",
+      "name": "Jynxzi"
     },
     {
       "login": "caseoh_",
       "min_views": 600,
       "max_per_run": 1,
-      "hashtags": "#caseoh"
+      "hashtags": "#caseoh",
+      "name": "CaseOh"
     },
     {
       "login": "clix",
       "min_views": 400,
       "max_per_run": 1,
       "hashtags": "#Clix",
-      "campaign": "Clix GTA VI",
-      "campaign_game": "Grand Theft Auto VI"
+      "campaign": "$5,000 Clix Pool Campaign",
+      "name": "Clix"
     },
     {
       "login": "ninja",
       "min_views": 800,
       "max_per_run": 1,
-      "hashtags": "#ninja"
+      "hashtags": "#ninja",
+      "name": "Ninja"
     },
     {
       "login": "tfue",
       "min_views": 800,
       "max_per_run": 1,
-      "hashtags": "#tfue"
+      "hashtags": "#tfue",
+      "name": "Tfue"
     }
   ]
 }
