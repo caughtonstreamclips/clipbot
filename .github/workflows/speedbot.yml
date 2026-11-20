@@ -24,6 +24,10 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - uses: denoland/setup-deno@v2   # YouTube now needs a JavaScript runtime for yt-dlp
+        with:
+          deno-version: v2.x
+
       - name: Install ffmpeg
         run: (command -v ffmpeg >/dev/null && fc-list | grep -qi dejavu) || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core)
 
@@ -40,7 +44,7 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
-        run: pip install -U yt-dlp && python speedbot.py
+        run: pip install -U "yt-dlp[default]" && python speedbot.py
 
       - name: Save which streams were done
         run: |
