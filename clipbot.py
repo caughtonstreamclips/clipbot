@@ -71,7 +71,7 @@ def find_new_clips(token, posted):
             c["_gta"] = bool(gta and c.get("game_id") == gta)
             # campaign only counts if the clip is from the right game (when the campaign needs one)
             c["_campaign"] = s.get("campaign") if (not camp_game or c.get("game_id") == camp_game) else None
-            picks.append((s, u["display_name"], c))
+            picks.append((s, s.get("name") or u["display_name"], c))
     picks.sort(key=lambda p: p[2]["view_count"], reverse=True)
     return picks[: CONFIG["max_per_run_total"]]
 
@@ -84,6 +84,19 @@ def ass_time(t):
 
 def clean(txt):
     return re.sub(r"[{}\\\n\r]", " ", txt).strip()
+
+
+def nice_title(raw):
+    """Viewer clip titles are often junk ("hahahaha", "lol", one letter). Use a solid default then."""
+    t = clean(raw or "")
+    t = re.sub(r"(.)\1{3,}", r"\1\1\1", t)          # "hahahahaha" style runs -> shorter
+    t = re.sub(r"((\w\w)\2{2,})", r"\2\2\2", t, flags=re.I)  # "hahahaha" -> "hahaha"
+    t = re.sub(r"([^\w\s])\1+", r"\1", t)          # "!!!!!!" / "🔴🔴🔴" -> one
+    t = re.sub(r"\s+", " ", t).strip()
+    letters = re.sub(r"[^A-Za-z]", "", t)
+    if len(letters) < 4 or len(set(letters.lower())) < 3:
+        return "lost it"
+    return t[:60]
 
 
 def transcribe(path):
@@ -211,7 +224,10 @@ def render(src, out, streamer, ass_path, duration):
 
 # ---------------------------------------------------------------- discord
 def send_discord(path, streamer, name, clip):
-    title = clean(clip["title"])[:80]
+    title = nice_title(clip["title"])
+    first = re.sub(r"[^a-z]", "", title.split()[0].lower()) if title.split() else ""
+    if first and first.startswith(re.sub(r"[^a-z]", "", name.lower())[:4]):
+        title = " ".join(title.split()[1:]) or title   # "Lacy LACYY LEAKING..." -> "Lacy LEAKING..."
     tags = streamer["hashtags"]
     game_tags = "#gta6 #gtavi #gta " if clip.get("_gta") else ""
     tiktok = f"{name} {title} 😭 {tags} {game_tags}#twitch #streamer #fyp"
@@ -259,7 +275,7 @@ def main():
             hook1 = f"{name} in GTA 6" if clip.get("_gta") else name
             look, layout = choose_layout(src, streamer)
             ass_path = WORK / "subs.ass"
-            ass_path.write_text(build_ass(words, hook1, clip["title"], layout, dur))
+            ass_path.write_text(build_ass(words, hook1, nice_title(clip["title"]), layout, dur))
             out = WORK / "out.mp4"
             render(src, out, look, ass_path, dur)
             send_discord(out, streamer, name, clip)
